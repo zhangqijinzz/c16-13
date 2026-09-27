@@ -1,27 +1,30 @@
-import { isFrameDocument } from './domain';
-import { EMPTY_DOCUMENT, type FrameDocument } from './model';
+import { isFrameDocument, isFrameSnapshot } from './domain';
+import { EMPTY_SNAPSHOT, type FrameSnapshot } from './model';
 import type { StorageService } from './service';
 
 export interface FrameRepository {
-  load(): FrameDocument;
-  save(document: FrameDocument): void;
+  load(): FrameSnapshot;
+  save(snapshot: FrameSnapshot): void;
 }
 
 export class LocalFrameRepository implements FrameRepository {
   constructor(private readonly storage: StorageService) {}
 
-  load(): FrameDocument {
+  load(): FrameSnapshot {
     const raw = this.storage.read();
-    if (!raw) return structuredClone(EMPTY_DOCUMENT);
+    if (!raw) return structuredClone(EMPTY_SNAPSHOT);
     try {
       const parsed: unknown = JSON.parse(raw);
-      return isFrameDocument(parsed) ? parsed : structuredClone(EMPTY_DOCUMENT);
+      if (isFrameSnapshot(parsed)) return parsed;
+      // 兼容旧版：只存了单个文档、没有最近图片归档。
+      if (isFrameDocument(parsed)) return { version: 1, document: parsed, recent: [] };
+      return structuredClone(EMPTY_SNAPSHOT);
     } catch {
-      return structuredClone(EMPTY_DOCUMENT);
+      return structuredClone(EMPTY_SNAPSHOT);
     }
   }
 
-  save(document: FrameDocument): void {
-    this.storage.write(JSON.stringify(document));
+  save(snapshot: FrameSnapshot): void {
+    this.storage.write(JSON.stringify(snapshot));
   }
 }

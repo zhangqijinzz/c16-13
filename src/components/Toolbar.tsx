@@ -1,13 +1,16 @@
-import type { GuideKey, Ratio } from '../model';
+import { imageKey } from '../domain';
+import type { GuideKey, ImageSession, Ratio } from '../model';
 
 interface ToolbarProps {
   guides: Record<GuideKey, boolean>;
   ratio: string;
+  recent: ImageSession[];
   onImport: (file: File) => void;
   onDemo: () => void;
   onToggleGuide: (guide: GuideKey) => void;
   onRatio: (ratio: Ratio) => void;
   onCompare: () => void;
+  onRestore: (key: string) => void;
   compareOpen: boolean;
 }
 
@@ -28,6 +31,21 @@ export function Toolbar(props: ToolbarProps) {
         </label>
         <button className="quiet-button" onClick={props.onDemo}>示例图</button>
       </div>
+
+      {props.recent.length > 0 && (
+        <div className="control-group">
+          <div className="section-label"><span>最近图片</span><small>RECENT</small></div>
+          <div className="recent-list">
+            {props.recent.map((session) => (
+              <button key={imageKey(session.image)} className="recent-item" onClick={() => props.onRestore(imageKey(session.image))} title={`切回「${session.image.name}」`}>
+                <img src={session.image.src} alt="" />
+                <span className="recent-name">{session.image.name}</span>
+                <small>{session.variants.length} 方案{session.subject ? ' · 主体' : ''}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="control-group">
         <div className="section-label"><span>辅助层</span><small>GUIDES</small></div>
