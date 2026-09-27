@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { CanvasStage } from './components/CanvasStage';
 import { EmptyState } from './components/EmptyState';
+import { SwitchDialog } from './components/SwitchDialog';
 import { Toolbar } from './components/Toolbar';
 import { VariantList } from './components/VariantList';
+import { isDefaultCrop } from './domain';
 import { LocalFrameRepository } from './repository';
 import { BrowserImageService, BrowserStorageService } from './service';
 import type { CropVariant, ImageAsset, Ratio } from './model';

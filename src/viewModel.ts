@@ -1,13 +1,14 @@
 import { useState, useSyncExternalStore } from 'react';
-import { cropForRatio, makeVariant, moveCrop, resizeCrop } from './domain';
-import { EMPTY_DOCUMENT, type FrameDocument, type GuideKey, type Ratio, type ViewState } from './model';
+import { cropForRatio, hasImageWork, imageKey, makeVariant, moveCrop, rememberWork, resizeCrop, takeWork } from './domain';
+import { DEFAULT_CROP, EMPTY_DOCUMENT, EMPTY_STASH, type FrameDocument, type GuideKey, type ImageAsset, type Ratio, type ViewState, type WorkStash } from './model';
 import type { FrameRepository } from './repository';
 import type { ImageService } from './service';
 
 type Listener = () => void;
 
 export class FrameSenseViewModel {
-  private state: ViewState = { phase: 'loading', document: structuredClone(EMPTY_DOCUMENT), compareOpen: false, notice: '', error: null };
+  private state: ViewState = { phase: 'loading', document: structuredClone(EMPTY_DOCUMENT), compareOpen: false, notice: '', error: null, pendingSwitch: null };
+  private stash: WorkStash = structuredClone(EMPTY_STASH);
   private readonly listeners = new Set<Listener>();
 
   constructor(private readonly repository: FrameRepository, private readonly imageService: ImageService) {}
@@ -37,6 +38,7 @@ export class FrameSenseViewModel {
     this.patch({ phase: 'loading', notice: '正在恢复上次工作状态…', error: null });
     try {
       const document = this.repository.load();
+      this.stash = this.repository.loadWork();
       this.patch({ document, phase: document.image ? 'editing' : 'ready', notice: document.image ? '已恢复上次工作状态' : '欢迎来到 FrameSense，先载入示例或导入图片。' });
     } catch {
       this.patch({ phase: 'error', notice: '未能读取历史状态，可继续新建工作。', error: '本地数据读取失败。' });
@@ -47,15 +49,79 @@ export class FrameSenseViewModel {
     this.patch({ phase: 'loading', notice: '正在载入图片…', error: null });
     try {
       const image = await this.imageService.readFile(file);
-      const document: FrameDocument = { ...structuredClone(EMPTY_DOCUMENT), image };
-      this.persist(document, '图片已载入，可以开始构图。');
+      this.requestSwitch(image);
     } catch (error) {
       this.patch({ phase: 'error', error: error instanceof Error ? error.message : '图片载入失败。' });
     }
   }
 
   loadDemo(): void {
-    this.persist({ ...structuredClone(EMPTY_DOCUMENT), image: this.imageService.demo() }, '示例图片已载入。');
+    this.requestSwitch(this.imageService.demo());
+  }
+
+  /**
+   * 换图入口：辅助层偏好始终延续；当前图片上的方案、主体标记和画框调整
+   * 会留在原图名下，切回时自动恢复。当前图上有成果时先征得用户确认。
+   */
+  private requestSwitch(image: ImageAsset): void {
+    const current = this.state.document;
+    if (current.image && imageKey(current.image) === imageKey(image)) {
+      this.patch({ phase: 'editing', notice: `「${image.name}」已经在工作台上，方案与标记保持不变。`, error: null });
+      return;
+    }
+    if (current.image && hasImageWork(current)) {
+      const restores = this.stash.entries[imageKey(image)] ?? null;
+      this.patch({ phase: 'editing', pendingSwitch: { image, restores }, notice: '', error: null });
+      return;
+    }
+    this.applySwitch(image);
+  }
+
+  confirmSwitch(): void {
+    const pending = this.state.pendingSwitch;
+    if (!pending) return;
+    this.applySwitch(pending.image);
+  }
+
+  cancelSwitch(): void {
+    if (!this.state.pendingSwitch) return;
+    this.patch({ pendingSwitch: null, notice: '已取消切换，当前图片的方案与标记保持不变。' });
+  }
+
+  private applySwitch(image: ImageAsset): void {
+    const current = this.state.document;
+    let stash = this.stash;
+    if (current.image && hasImageWork(current)) {
+      stash = rememberWork(stash, current.image, {
+        imageName: current.image.name,
+        subject: current.subject,
+        crop: current.crop,
+        variants: current.variants,
+        updatedAt: Date.now(),
+      });
+    }
+    const taken = takeWork(stash, image);
+    stash = taken.stash;
+    const work = taken.work;
+    const document: FrameDocument = {
+      version: 1,
+      image,
+      guides: { ...current.guides },
+      subject: work?.subject ?? null,
+      crop: work ? work.crop : structuredClone(DEFAULT_CROP),
+      variants: work ? work.variants : [],
+    };
+    this.stash = stash;
+    const notice = work
+      ? `已切换到「${image.name}」，恢复这张图片上次的裁切进度；辅助层设置已延续。`
+      : `已切换到「${image.name}」，可以开始构图；辅助层设置已延续。`;
+    this.patch({ document, phase: 'editing', compareOpen: false, pendingSwitch: null, notice, error: null });
+    try {
+      this.repository.save(document);
+      this.repository.saveWork(stash);
+    } catch {
+      this.patch({ phase: 'error', error: '本地保存失败，但当前编辑仍保留在页面中。请检查浏览器存储权限。' });
+    }
   }
 
   toggleGuide(guide: GuideKey): void {
